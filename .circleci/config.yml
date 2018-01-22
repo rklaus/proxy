@@ -1,0 +1,119 @@
+version: 2
+jobs:
+  build:
+
+    docker:
+      - image: circleci/postgres:9.5
+        environment:
+          CIRCLE_ENV: "test"
+          DATABASE_URL: "postgres://ubuntu:@127.0.0.1:5432/circle_test"
+          PGDATABASE: "circle_test"
+          PGHOST: "localhost"
+          PGPORT: "5432"
+          PGUSER: "ubuntu"
+
+    steps:
+
+      - checkout
+
+      - run: 
+          name: Install Dependent Packages
+          no_output_timeout: 5m
+          command: |
+            echo "Building using CircleCI 2.0"
+            set +e
+            apt-get update
+            apt-get install parallel libgetopt-declare-perl
+            apt-get --yes install postgresql-server-dev-9.5
+            apt-get --yes install git
+            apt-get --yes install gcc
+            apt-get install make
+            apt-get --yes install libmysqlclient-dev
+            yes | cpan TAP::Parser::SourceHandler::pgTAP
+            echo 127.0.0.1 pgproxy01.scalegenius.com | tee -a /etc/hosts
+            echo 127.0.0.1 sunup-ecs-prod.cjtyz5l7zjct.us-east-1.rds.amazonaws.com | tee -a /etc/hosts
+            echo 127.0.0.1 customer-site-prod.cjtyz5l7zjct.us-east-1.rds.amazonaws.com | tee -a /etc/hosts
+            echo 127.0.0.1 edw-prod.cjtyz5l7zjct.us-east-1.rds.amazonaws.com | tee -a /etc/hosts
+            echo 127.0.0.1 sunup-ecs-prod.cjtyz5l7zjct.us-east-1.rds.amazonaws.com | tee -a /etc/hosts
+
+      - run:
+          name: Start Postgres
+          command: |
+            pg_createcluster 9.5 main --start
+            sed -i 's/peer/trust/g' /etc/postgresql/9.5/main/pg_hba.conf
+            sed -i 's/peer/trust/g' /etc/postgresql/9.5/main/pg_hba.conf
+            sed -i 's/md5/trust/g' /etc/postgresql/9.5/main/pg_hba.conf
+            /etc/init.d/postgresql reload
+
+      - run:
+          name: Install mysql_fdw
+          no_output_timeout: 2m
+          command: |
+            git clone https://github.com/EnterpriseDB/mysql_fdw
+            export PATH=$PATH:/usr/include/mysql
+            cd mysql_fdw
+            make USE_PGXS=1
+            make USE_PGXS=1 install
+            cd ..
+
+      - run:
+          name: Install multicorn fdw
+          no_output_timeout: 2m
+          command: |
+            apt-get --yes install python-dev
+            apt-get --yes install python-setuptools
+            git clone https://github.com/Kozea/Multicorn.git
+            cd Multicorn
+            make
+            make install
+            cd ..
+
+      - run:
+          name: Install s3fdw
+          no_output_timeout: 2m
+          command: |
+            git clone https://github.com/blakedw/s3fdw
+
+      - run:
+          name: Clone proxy_fork
+          command: |
+            git clone https://github.com/rklaus/proxy_fork
+
+      - run:
+          name: Create the Proxy Database
+          no_output_timeout: 5m
+          command: |
+            echo "Create database user ubuntu"
+            psql --username=postgres --dbname=postgres --command="create user ubuntu with superuser"
+            echo "Create database ${PGDATABASE}"
+            createdb --username=postgres ${PGDATABASE}
+            echo "Create database ${PGDATABASE}_proxy"
+            createdb --username=postgres ${PGDATABASE}_proxy
+            bash ./build/dependencies.sh
+            perl -MTAP::Parser::SourceHandler::pgTAP -e 'print;'
+            echo "Create the mysql fdw functions"
+            psql --dbname=${PGDATABASE}_proxy --command="CREATE EXTENSION mysql_fdw;"
+            psql --dbname=${PGDATABASE}_proxy --command="GRANT ALL ON FOREIGN DATA WRAPPER mysql_fdw TO public;"
+            psql --dbname=${PGDATABASE}_proxy --command="CREATE EXTENSION multicorn;"
+            psql --dbname=${PGDATABASE}_proxy --command="GRANT ALL ON FOREIGN DATA WRAPPER multicorn TO public;"
+          when: on_success
+
+      - run:
+          name: Load the Proxy Database
+          no_output_timeout: 4m
+          command: |
+            echo "Run bash build/load_proxy_database.sh on ${PGDATABASE}_proxy"
+            cd proxy_fork
+            ./build/load_proxy_database.sh
+          when: on_success
+
+      - run:
+          name: Test the Proxy Database using pgTAP
+          no_output_timeout: 5m
+          command: |
+            echo "Run bash build/test_proxy_database.sh"
+            cd proxy_fork
+            bash build/test_proxy_database.sh
+          when: on_success
+
+
