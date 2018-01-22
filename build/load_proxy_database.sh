@@ -7,7 +7,7 @@ export PGOPTIONS="--client-min-messages=warning"
 PSQL_CMD="psql -a -P pager=off "
 PSQL="$PSQL_CMD -v VERBOSITY=terse -v ON_ERROR_STOP=on"
 
-D=${APP_ROOT}/proxy/sql
+D=${APP_ROOT}/sql
 
 export PGDATABASE=${PGDATABASE}_proxy
 echo "PGDATABASE = $PGDATABASE"

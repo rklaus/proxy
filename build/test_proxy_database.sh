@@ -5,7 +5,7 @@ export CIRCLE_ARTIFACTS=${CIRCLE_ARTIFACTS:-./tmp}
 
 BUILD=`dirname $0`
 _APP_ROOT=`dirname $BUILD`
-APP_ROOT=${_APP_ROOT}/proxy
+APP_ROOT=${_APP_ROOT}/
 D=${APP_ROOT}/sql
 
 export PGDATABASE=${PGDATABASE}_proxy
